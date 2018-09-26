@@ -2,6 +2,10 @@ variable "project" {
   default = "example"
 }
 
+variable "domain_name" {
+  default = "example-project.com"
+}
+
 variable "do_token" {}
 
 variable "do_region" {
@@ -72,6 +76,7 @@ resource "digitalocean_droplet" "manager" {
         "chmod +x /tmp/00-init.sh /tmp/01-manager.sh",
         "sudo -E /tmp/00-init.sh",
         "sudo -E /tmp/01-manager.sh",
+        "docker network create --driver=overlay traefik-net",
       ]
       connection {
         type        = "ssh"
@@ -127,6 +132,7 @@ resource "digitalocean_droplet" "worker" {
         "chmod +x /tmp/00-init.sh",
         "sudo -E /tmp/00-init.sh",
         "docker swarm join --token $JOIN_TOKEN $MANAGER_IP:2377",
+        "docker network create --driver=overlay traefik-net",
       ]
       connection {
         type        = "ssh"
@@ -136,3 +142,47 @@ resource "digitalocean_droplet" "worker" {
     }
 
 }
+
+resource "digitalocean_loadbalancer" "public" {
+  depends_on = ["digitalocean_droplet.manager", "digitalocean_droplet.worker"]
+  name = "${var.project}"
+  region = "${var.do_region}"
+
+  forwarding_rule {
+    entry_port = 80
+    entry_protocol = "http"
+
+    target_port = 80
+    target_protocol = "http"
+  }
+
+  healthcheck {
+    port = 80
+    protocol = "http"
+    path = "/"
+  }
+
+  droplet_ids = ["${digitalocean_droplet.manager.*.id}", "${digitalocean_droplet.worker.*.id}"]
+}
+
+resource "digitalocean_domain" "default" {
+  depends_on = ["digitalocean_loadbalancer.public"]
+  name       = "${var.domain_name}"
+  ip_address = "${digitalocean_loadbalancer.public.ip}"
+}
+
+resource "digitalocean_record" "manager" {
+  domain = "${digitalocean_domain.default.name}"
+  type   = "A"
+  name   = "swarm-manager.internal"
+  value  = "${digitalocean_droplet.manager.ipv4_address_private}"
+}
+
+resource "digitalocean_record" "worker" {
+  count = "${var.number_of_nodes}"
+  domain = "${digitalocean_domain.default.name}"
+  type   = "A"
+  name   = "${format("swarm-worker-%02d", count.index + 1)}.internal"
+  value  = "${digitalocean_droplet.worker.0.ipv4_address_private}"
+}
+
