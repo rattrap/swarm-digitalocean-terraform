@@ -1,0 +1,9 @@
+# This directory is meant for DO_TOKEN, etc
+secrets/
+
+# For VIM Users
+*.swp
+
+# Terraform assets
+*.tfstate
+*.tfstate.backup
