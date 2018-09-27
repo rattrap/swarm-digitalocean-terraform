@@ -143,23 +143,31 @@ resource "digitalocean_droplet" "worker" {
 
 }
 
+resource "digitalocean_certificate" "default" {
+  name              = "${var.project}"
+  private_key       = "${file("./secrets/certs/${var.domain_name}/key.pem")}"
+  leaf_certificate  = "${file("./secrets/certs/${var.domain_name}/cert.pem")}"
+}
+
 resource "digitalocean_loadbalancer" "public" {
-  depends_on = ["digitalocean_droplet.manager", "digitalocean_droplet.worker"]
+  depends_on = ["digitalocean_certificate.default", "digitalocean_droplet.manager", "digitalocean_droplet.worker"]
   name = "${var.project}"
   region = "${var.do_region}"
 
   forwarding_rule {
-    entry_port = 80
-    entry_protocol = "http"
+    entry_port = 443
+    entry_protocol = "https"
 
     target_port = 80
     target_protocol = "http"
+
+    certificate_id  = "${digitalocean_certificate.default.id}"
   }
 
   healthcheck {
     port = 80
     protocol = "http"
-    path = "/"
+    path = ""
   }
 
   droplet_ids = ["${digitalocean_droplet.manager.*.id}", "${digitalocean_droplet.worker.*.id}"]
