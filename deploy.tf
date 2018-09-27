@@ -77,6 +77,8 @@ resource "digitalocean_droplet" "manager" {
         "sudo -E /tmp/00-init.sh",
         "sudo -E /tmp/01-manager.sh",
         "docker network create --driver=overlay traefik-net",
+        "docker service create --name traefik --constraint=node.role==manager --publish 80:80 --publish 8080:8080 --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock --network traefik-net traefik --docker --docker.swarmMode --docker.domain=${var.domain_name} --docker.watch --api",
+        "docker service create --name whoami0 --label \"traefik.frontend.rule=HostRegexp:{catchall:.*}\" --label \"traefik.frontend.priority=1\" --label \"traefik.docker.network=traefik-net\" --label \"traefik.port=80\" --network traefik-net emilevauge/whoami"
       ]
       connection {
         type        = "ssh"
@@ -165,12 +167,12 @@ resource "digitalocean_loadbalancer" "public" {
   }
 
   healthcheck {
-    port = 80
+    port = 8080
     protocol = "http"
-    path = ""
+    path = "/health"
   }
 
-  droplet_ids = ["${digitalocean_droplet.manager.*.id}", "${digitalocean_droplet.worker.*.id}"]
+  droplet_ids = ["${digitalocean_droplet.manager.*.id}"]
 }
 
 resource "digitalocean_domain" "default" {
@@ -186,6 +188,13 @@ resource "digitalocean_record" "manager" {
   value  = "${digitalocean_droplet.manager.ipv4_address_private}"
 }
 
+resource "digitalocean_record" "manager_public" {
+  domain = "${digitalocean_domain.default.name}"
+  type   = "A"
+  name   = "manager"
+  value  = "${digitalocean_droplet.manager.ipv4_address}"
+}
+
 resource "digitalocean_record" "worker" {
   count = "${var.number_of_nodes}"
   domain = "${digitalocean_domain.default.name}"
@@ -193,4 +202,3 @@ resource "digitalocean_record" "worker" {
   name   = "${format("swarm-worker-%02d", count.index + 1)}.internal"
   value  = "${digitalocean_droplet.worker.0.ipv4_address_private}"
 }
-
