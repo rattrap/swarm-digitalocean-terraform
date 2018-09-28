@@ -40,6 +40,12 @@ resource "digitalocean_ssh_key" "default" {
   public_key = "${file("${var.ssh_public_key}")}"
 }
 
+resource "digitalocean_volume" "registry" {
+  region      = "${var.do_region}"
+  name        = "registry"
+  size        = 50
+}
+
 resource "digitalocean_droplet" "manager" {
     depends_on = ["digitalocean_ssh_key.default"]
     image = "coreos-stable"
@@ -48,6 +54,7 @@ resource "digitalocean_droplet" "manager" {
     size = "${var.size_node}"
     private_networking = true
     ssh_keys = ["${split(",", var.ssh_fingerprint)}"]
+    volume_ids = ["${digitalocean_volume.registry.id}"]
 
     provisioner "file" {
       source      = "./00-init.sh"
@@ -73,12 +80,11 @@ resource "digitalocean_droplet" "manager" {
       inline = [
         "export PRIVATE_IP=\"${self.ipv4_address_private}\"",
         "export PUBLIC_IP=\"${self.ipv4_address}\"",
+        "export REGISTRY_VOLUME_ID=\"${digitalocean_volume.registry.id}\"",
+        "export DOMAIN=\"${var.domain_name}\"",
         "chmod +x /tmp/00-init.sh /tmp/01-manager.sh",
         "sudo -E /tmp/00-init.sh",
         "sudo -E /tmp/01-manager.sh",
-        "docker network create --driver=overlay traefik-net",
-        "docker service create --name traefik --constraint=node.role==manager --publish 80:80 --publish 8080:8080 --mount type=bind,source=/var/run/docker.sock,target=/var/run/docker.sock --network traefik-net traefik --docker --docker.swarmMode --docker.domain=${var.domain_name} --docker.watch --api",
-        "docker service create --name whoami0 --label \"traefik.frontend.rule=HostRegexp:{catchall:.*}\" --label \"traefik.frontend.priority=1\" --label \"traefik.docker.network=traefik-net\" --label \"traefik.port=80\" --network traefik-net emilevauge/whoami"
       ]
       connection {
         type        = "ssh"
@@ -134,7 +140,6 @@ resource "digitalocean_droplet" "worker" {
         "chmod +x /tmp/00-init.sh",
         "sudo -E /tmp/00-init.sh",
         "docker swarm join --token $JOIN_TOKEN $MANAGER_IP:2377",
-        "docker network create --driver=overlay traefik-net",
       ]
       connection {
         type        = "ssh"
@@ -201,4 +206,11 @@ resource "digitalocean_record" "worker" {
   type   = "A"
   name   = "${format("swarm-worker-%02d", count.index + 1)}.internal"
   value  = "${digitalocean_droplet.worker.0.ipv4_address_private}"
+}
+
+resource "digitalocean_record" "registry" {
+  domain = "${digitalocean_domain.default.name}"
+  type   = "A"
+  name   = "registry"
+  value  = "${digitalocean_droplet.manager.ipv4_address}"
 }
